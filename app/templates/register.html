@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Register - HiveMatrix Core</title>
+</head>
+<body>
+    <h1>Register for HiveMatrix</h1>
+    <form method="POST" action="">
+        <div>
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <br>
+        <div>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <br>
+        <div>
+            <button type="submit">Register</button>
+        </div>
+    </form>
+    <a href="{{ url_for('login') }}">Already have an account? Log In</a>
+</body>
+</html>

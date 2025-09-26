@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HiveMatrix Core</title>
+</head>
+<body>
+    <h1>Welcome to HiveMatrix Core</h1>
+
+    {% if user %}
+        <h2>Authenticated!</h2>
+        <p>Hello, {{ user.preferred_username }}!</p>
+        <p>Email: {{ user.email }}</p>
+        <pre>{{ user }}</pre>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+        <h2>Not Authenticated</h2>
+        <p>Please log in to continue.</p>
+        <a href="{{ url_for('login') }}">Login</a>
+    {% endif %}
+
+</body>
+</html>

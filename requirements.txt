@@ -1,4 +1,5 @@
 Flask==2.3.3
 Authlib==1.2.1
 python-dotenv==1.0.0
-requests
+PyJWT==2.8.0
+cryptography>=3.4.7

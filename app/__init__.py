@@ -1,17 +1,40 @@
-import os
 from flask import Flask
 from authlib.integrations.flask_client import OAuth
+import os
 
 app = Flask(__name__)
-# Load configuration from .flaskenv
-app.config.from_mapping(
-    SECRET_KEY=os.environ.get("SECRET_KEY"),
-    KEYCLOAK_CLIENT_SECRET=os.environ.get("KEYCLOAK_CLIENT_SECRET"),
-    KEYCLOAK_SERVER_URL=os.environ.get("KEYCLOAK_SERVER_URL"),
-    KEYCLOAK_CLIENT_ID=os.environ.get("KEYCLOAK_CLIENT_ID"),
-)
 
-# Initialize Authlib OAuth client
+# --- Explicitly load all required configuration from environment variables ---
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+
+# Keycloak Settings
+app.config['KEYCLOAK_SERVER_URL'] = os.environ.get('KEYCLOAK_SERVER_URL')
+app.config['KEYCLOAK_CLIENT_ID'] = os.environ.get('KEYCLOAK_CLIENT_ID')
+app.config['KEYCLOAK_CLIENT_SECRET'] = os.environ.get('KEYCLOAK_CLIENT_SECRET')
+
+# JWT Settings
+app.config['JWT_PRIVATE_KEY_FILE'] = os.environ.get('JWT_PRIVATE_KEY_FILE')
+app.config['JWT_PUBLIC_KEY_FILE'] = os.environ.get('JWT_PUBLIC_KEY_FILE')
+app.config['JWT_ISSUER'] = os.environ.get('JWT_ISSUER')
+app.config['JWT_ALGORITHM'] = os.environ.get('JWT_ALGORITHM')
+# --- End of explicit configuration loading ---
+
+# Validate that the secret key was loaded
+if not app.config['SECRET_KEY']:
+    raise ValueError("A SECRET_KEY must be set in the .flaskenv file.")
+
+# Load JWT keys from files into config
+try:
+    with open(app.config['JWT_PRIVATE_KEY_FILE'], 'rb') as f:
+        app.config['JWT_PRIVATE_KEY'] = f.read()
+    with open(app.config['JWT_PUBLIC_KEY_FILE'], 'rb') as f:
+        app.config['JWT_PUBLIC_KEY'] = f.read()
+except (KeyError, TypeError):
+    print("WARNING: JWT_PRIVATE_KEY_FILE or JWT_PUBLIC_KEY_FILE not configured in .flaskenv")
+except FileNotFoundError:
+    print("FATAL: JWT Key files not found. Please generate them using 'openssl'.")
+
+
 oauth = OAuth(app)
 oauth.register(
     name='keycloak',
@@ -19,10 +42,8 @@ oauth.register(
     client_secret=app.config.get("KEYCLOAK_CLIENT_SECRET"),
     server_metadata_url=f'{app.config.get("KEYCLOAK_SERVER_URL")}/.well-known/openid-configuration',
     client_kwargs={
-        'scope': 'openid email profile' # Defines what info we want from Keycloak
+        'scope': 'openid email profile'
     }
 )
 
-# Import routes after app and oauth are initialized
 from app import routes
-

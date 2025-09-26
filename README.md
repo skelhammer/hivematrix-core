@@ -136,9 +136,24 @@ KEYCLOAK_SERVER_URL='http://localhost:8080/realms/hivematrix'
 KEYCLOAK_CLIENT_ID='core-client'
 KEYCLOAK_CLIENT_SECRET='<YOUR_CLIENT_SECRET>'
 
+# JWT Signing Settings
+JWT_PRIVATE_KEY_FILE='private_key.pem'
+JWT_PUBLIC_KEY_FILE='public_key.pem'
+JWT_ISSUER='hivematrix.core'
+JWT_ALGORITHM='RS256'
+
+```
+### 2.3 Gen keys
+
+```
+# Generate a 2048-bit RSA private key
+openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
+
+# Extract the public key from the private key
+openssl rsa -pubout -in private_key.pem -out public_key.pem
 ```
 
-### 2.3 Run the Core Service
+### 2.4 Run the Core Service
 
 ```
 flask run

@@ -1,7 +1,6 @@
-
 # HiveMatrix Architecture & AI Development Guide
 
-**Version 2.0**
+**Version 3.0**
 
 ## 1. Core Philosophy & Goals
 
@@ -9,138 +8,217 @@ This document is the single source of truth for the HiveMatrix architecture. Its
 
 Our goals are, in order of priority:
 
-1.  **AI Maintainability:** The entire system is designed to be understood and modified by an AI. This means each individual application codebase (e.g., the entire `Resolve` application) **must** remain small, focused, and simple. We sacrifice some traditional development conveniences to achieve this.
-    
-2.  **Modularity:** The platform is a collection of small, independent, and fully functional applications that can be composed together. This allows for independent updates, deployments, and fault isolation.
-    
-3.  **Simplicity:** We favor simple, explicit patterns over complex, "magical" ones. If there is a choice between a clever one-line solution and a verbose five-line one, choose the latter.
-    
+1.  **AI Maintainability:** Each individual application (e.g., `Resolve`) must remain small, focused, and simple. We sacrifice some traditional development conveniences to achieve this.
+2.  **Modularity:** The platform is a collection of independent, fully functional applications that can be composed together.
+3.  **Simplicity & Explicitness:** We favor simple, explicit patterns over complex, "magical" ones. Assume code is correct and error out to expose flaws rather than building defensive checks.
 
-## 2. Backend: The Monolithic Service Pattern
+## 2. The Monolithic Service Pattern
 
 Each module in HiveMatrix (e.g., `Resolve`, `Architect`) is a **self-contained, monolithic application**. Each application is a single, deployable unit responsible for its own business logic, database, and UI rendering.
 
-### Service Overview
+* **Server-Side Rendering:** Applications **must** render their user interfaces on the server side, returning complete HTML documents.
+* **Data APIs:** Applications may *also* expose data-only APIs (e.g., `/api/tickets`) that return JSON.
+* **Data Isolation:** Each service owns its own database. You are forbidden from accessing another service's database directly.
 
--   **Core (IAM):** The security backbone. Handles all user and service authentication. Issues JWTs for all other services to consume.
-    
--   **Nexus (UI Compositor & Proxy):** The user-facing gateway. Its primary role is to act as a smart reverse proxy that assembles the final UI for the user. It contains no business logic of its own.
-    
--   **Codex (CRM):** A complete application for managing clients, contacts, and assets.
-    
--   **Architect (Project Management):** A complete application for managing projects, tasks, and timelines.
-    
--   **KnowledgeTree (Wiki):** A complete application for the hierarchical knowledge base.
-    
--   **Resolve (Ticketing):** A complete application for the AI-first ticketing system.
-    
--   **Brainhair (AI Processor):** Pluggable interface for connecting to various AI models.
-    
--   **Tracker (Order Tracking):** A complete application for managing client procurement.
-    
--   **Ledger (Billing):** A complete application for aggregating billing information.
-    
+## 3. End-to-End Authentication Flow
 
-### AI Instructions for Application Development
+The platform operates on a centralized login model orchestrated by `Core` and `Nexus`. No service handles user credentials directly.
 
--   **Server-Side Rendering:** Applications **must** render their user interfaces on the server side. They will have web endpoints (e.g., `/tickets/view/123`) that return complete HTML documents.
-    
--   **Data APIs:** Applications may _also_ expose data-only APIs (e.g., `/api/tickets`) that return JSON for automation or future needs.
-    
--   **Data Isolation:** Each service owns its own database. You are forbidden from accessing another service's database directly. You must always go through its public API if one is available.
-    
--   **Authentication:** All inter-service communication and access to protected UI routes must be authenticated. Services will validate a JWT issued by **Core**.
-    
 
-## 3. Frontend: UI Composition via Smart Proxy
 
-The HiveMatrix user interface is not a single JavaScript application. It is a **composition** of multiple, independent, server-rendered applications presented to the user through the `Nexus` proxy.
+1.  **Initial Request:** A user navigates to a protected resource, e.g., `http://nexus/template/`.
+2.  **Auth Check:** `Nexus` checks the user's session. If no valid session token exists, it stores the target URL (`/template/`) and redirects the user to `Core` for login.
+3.  **Keycloak Login:** `Core` immediately redirects the user to the Keycloak login page.
+4.  **Callback to Core:** After successful login, Keycloak redirects the user back to `Core`'s `/auth` callback with an authorization code.
+5.  **Token Minting:** `Core` exchanges the code for a Keycloak token, extracts the user info, and then **mints its own, internal HiveMatrix JWT**. This token is signed with `Core`'s private RSA key.
+6.  **Callback to Nexus:** `Core` redirects the user back to `Nexus`'s `/auth-callback`, passing the new HiveMatrix JWT as a URL parameter.
+7.  **Session Creation:** `Nexus` fetches `Core`'s public key from its `/.well-known/jwks.json` endpoint, verifies the JWT's signature and claims, and securely stores the token in the user's session.
+8.  **Final Redirect:** `Nexus` redirects the user to their originally requested URL (`/template/`).
+9.  **Proxied & Authenticated Request:** Now logged in, `Nexus` proxies the request to the `Template` service, adding the user's JWT in the `Authorization: Bearer <token>` header.
+10. **Backend Verification:** The `Template` service receives the request, fetches `Core`'s public key, verifies the JWT, and then processes the request, returning the protected HTML.
+
+## 4. Frontend: The Smart Proxy Composition Model
+
+The user interface is a composition of the independent applications, assembled by the `Nexus` proxy.
 
 ### The Golden Rule of Styling
 
-**Applications are forbidden from containing their own styling.**
+**Applications are forbidden from containing their own styling.** All visual presentation (CSS) is handled exclusively by `Nexus` injecting a global stylesheet. Applications must use the BEM classes defined in this document.
 
-This means:
+### The `Nexus` Service
 
--   No `.css`, `.scss`, or `.less` files.
-    
--   No `<style>` blocks in HTML templates.
-    
--   No inline `style="..."` attributes.
-    
+`Nexus` acts as the central gateway. Its responsibilities are:
+* Enforcing authentication for all routes.
+* Proxying requests to the appropriate backend service based on the URL path.
+* Injecting the global `global.css` stylesheet into any HTML responses.
+* Discovering backend services via the `services.json` file.
 
-Applications are responsible for **structure (HTML)** and **logic (Python, etc.)** only. All visual presentation is handled exclusively by `Nexus`.
-
-### The `Nexus` UI Composition Model
-
-1.  A user navigates to `https://hivematrix.com/resolve/tickets`.
-    
-2.  The request hits **`Nexus`**.
-    
-3.  `Nexus` proxies the request to the internal `Resolve` application.
-    
-4.  The `Resolve` application processes the request, queries its database, and renders a complete, but **unstyled**, HTML page.
-    
-5.  `Resolve` returns the unstyled HTML back to `Nexus`.
-    
-6.  `Nexus` receives the HTML. Before sending it to the user, it **injects the global stylesheet** into the `<head>` tag of the document.
-    
-7.  The final, styled HTML is sent to the user's browser.
-    
-
-### Development Workflow Mandate
-
-An application must be fully functional when accessed directly (e.g., at its internal IP/port). It will appear unstyled. To finalize a feature or debug a layout, you must test it by accessing it through the `Nexus` URL.
-
-## 4. The HiveMatrix Design System & CSS
-
-To ensure a consistent user experience, all styling is controlled by a single, global stylesheet located in `Nexus`. To prevent class name conflicts, we use the **BEM (Block, Element, Modifier)** naming convention.
-
-**You must adhere to this convention strictly.**
-
-### BEM Naming Convention
-
--   **Block:** A standalone, reusable component. `Examples: .card, .btn, .form-field`
-    
--   **Element:** A part of a block. Its name is formed by `block-name__element-name`. `Examples: .card__title, .btn__icon, .form-field__label`
-    
--   **Modifier:** A flag that changes the state or appearance of a block or element. Its name is formed by `block-name--modifier-name` or `block-name__element-name--modifier-name`. `Examples: .btn--danger, .form-field--has-error`
-    
-
-### Example: Creating a Button
-
-**1. AI Task: "Create a red 'Delete' button for a ticket in `Resolve`."**
-
-**2. AI Action: Consult this document for the `btn` component.**
-
-```
-### Component: Button (`btn`)
-
-**Block:** `.btn`
-The base class for all button elements.
-
-**Elements:**
-- `.btn__icon`: For an icon inside a button.
-- `.btn__label`: For the text label of a button.
-
-**Modifiers:**
-- `.btn--primary`: For the main call-to-action.
-- `.btn--danger`: For destructive actions (e.g., delete).
-- `.btn--disabled`: For disabled or inactive buttons.
+**File: `hivematrix-nexus/services.json`**
+```json
+{
+  "template": {
+    "url": "http://localhost:5001"
+  },
+  "codex": {
+    "url": "http://localhost:5002"
+  }
+}
 
 ```
 
-**3. AI Action: Write the HTML template in the `Resolve` application using the correct BEM classes.**
+## 5. AI Instructions for Building a New Service
+
+All new services (e.g., `Codex`, `Architect`) **must** be created by copying the `hivematrix-template` project. This ensures all necessary patterns are included.
+
+### Step 1: Configuration
+
+Every service requires an `app/__init__.py` that explicitly loads its configuration from a `.flaskenv` file. This is mandatory for security and proper function.
+
+**File: `[new-service]/app/__init__.py` (Example)**
+
+Python
 
 ```
-<!-- INCORRECT: Does not use BEM -->
-<button class="delete-button">Delete Ticket</button>
+from flask import Flask
+import os
 
-<!-- CORRECT: Uses the defined BEM structure -->
-<button class="btn btn--danger">
-  <span class="btn__label">Delete Ticket</span>
-</button>
+app = Flask(__name__)
+
+# Explicitly load all required configuration from environment variables
+app.config['CORE_SERVICE_URL'] = os.environ.get('CORE_SERVICE_URL')
+
+# Add any other service-specific config variables here
+# app.config['DATABASE_URI'] = os.environ.get('DATABASE_URI')
+
+if not app.config['CORE_SERVICE_URL']:
+    raise ValueError("CORE_SERVICE_URL must be set in the .flaskenv file.")
+
+from app import routes
 
 ```
 
-By following this pattern, the HTML generated by the `Resolve` application is simple and semantic. The visual appearance (`color: red`, etc.) is applied automatically by the global stylesheet injected by `Nexus`.
+**File: `[new-service]/.flaskenv` (Example)**
+
+Plaintext
+
+```
+FLASK_APP=run.py
+FLASK_ENV=development
+CORE_SERVICE_URL='http://localhost:5000'
+# Add other service-specific env vars here
+# DATABASE_URI='sqlite:///app.db'
+
+```
+
+### Step 2: Securing Routes
+
+All routes that display user data or perform actions must be protected by the `@token_required` decorator. This decorator handles JWT verification.
+
+**File: `[new-service]/app/auth.py` (Do not modify)**
+
+Python
+
+```
+from functools import wraps
+from flask import request, g, current_app, abort
+import jwt
+
+# This file should be copied verbatim from hivematrix-template
+
+jwks_client = None
+
+def init_jwks_client():
+    # ... (implementation from template)
+
+def token_required(f):
+    # ... (implementation from template)
+
+```
+
+**File: `[new-service]/app/routes.py` (Example)**
+
+Python
+
+```
+from flask import render_template, g
+from app import app
+from .auth import token_required
+
+@app.route('/')
+@token_required # This decorator protects the route
+def index():
+    # The user's information is available in the 'g.user' object
+    user = g.user
+    return render_template('index.html', user=user)
+
+```
+
+### Step 3: Building the UI Template
+
+HTML templates must be unstyled and use the BEM classes from the design system. User data from the JWT is passed into the template.
+
+**File: `[new-service]/app/templates/index.html` (Example)**
+
+HTML
+
+```
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>My New Service</title>
+</head>
+<body>
+    <div class="card">
+        <div class="card__header">
+            <h1 class="card__title">Hello, {{ user.name }}!</h1>
+        </div>
+        <div class="card__body">
+            <p>Your username is: <strong>{{ user.preferred_username }}</strong></p>
+            <button class="btn btn--primary">
+                <span class="btn__label">Primary Action</span>
+            </button>
+        </div>
+    </div>
+</body>
+</html>
+
+```
+
+## 6. Running the Development Environment
+
+To run the full platform, you must start each service in its own terminal on its designated port.
+
+1.  **Keycloak:** `./kc.sh start-dev` (Runs on port `8080`)
+
+2.  **Core:** `flask run --port=5000`
+
+3.  **Nexus:** `flask run --port=8000`
+
+4.  **Template:** `flask run --port=5001`
+
+5.  **Codex (New Service):** `flask run --port=5002`
+
+6.  ...and so on for other services.
+
+
+Access the platform through the Nexus URL: `http://localhost:8000`.
+
+## 7. Design System & BEM Classes
+
+_(This section will be expanded with more components as they are built.)_
+
+### Component: Card (`.card`)
+
+-   **Block:** `.card` - The main container.
+
+-   **Elements:** `.card__header`, `.card__title`, `.card__body`
+
+
+### Component: Button (`.btn`)
+
+-   **Block:** `.btn`
+
+-   **Elements:** `.btn__icon`, `.btn__label`
+
+-   **Modifiers:** `.btn--primary`, `.btn--danger`

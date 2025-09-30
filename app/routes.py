@@ -37,8 +37,6 @@ def auth():
         'exp': int(time.time()) + 3600, # Expires in 1 hour
     }
 
-    # **THE FIX IS HERE:** We add a header with the Key ID ('kid')
-    # This ID must match the 'kid' served by our jwks.json endpoint.
     headers = {
         "kid": "hivematrix-signing-key-1"
     }
@@ -67,6 +65,47 @@ def logout():
     post_logout_redirect_uri = url_for('home', _external=True)
     logout_url = f"{keycloak_server_url}/protocol/openid-connect/logout?post_logout_redirect_uri={post_logout_redirect_uri}"
     return redirect(logout_url)
+
+@app.route('/service-token', methods=['POST'])
+def service_token():
+    """
+    Mints a service-to-service JWT token.
+    This endpoint is NOT protected because services need to call it before they have a token.
+    Security is provided by the fact that this endpoint is only accessible within the internal network.
+
+    In production, you should add IP whitelisting or a shared secret for additional security.
+    """
+    data = request.get_json()
+    calling_service = data.get('calling_service')
+    target_service = data.get('target_service')
+
+    if not calling_service or not target_service:
+        return jsonify({'error': 'calling_service and target_service are required'}), 400
+
+    private_key = current_app.config['JWT_PRIVATE_KEY']
+
+    payload = {
+        'iss': current_app.config['JWT_ISSUER'],
+        'sub': f'service:{calling_service}',
+        'calling_service': calling_service,
+        'target_service': target_service,
+        'type': 'service',  # Distinguishes from user tokens
+        'iat': int(time.time()),
+        'exp': int(time.time()) + 300,  # 5 minute expiration for service calls
+    }
+
+    headers = {
+        "kid": "hivematrix-signing-key-1"
+    }
+
+    token = jwt.encode(
+        payload,
+        private_key,
+        algorithm=current_app.config['JWT_ALGORITHM'],
+        headers=headers
+    )
+
+    return jsonify({'token': token}), 200
 
 @app.route('/.well-known/jwks.json')
 def jwks():

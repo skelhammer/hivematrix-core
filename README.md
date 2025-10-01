@@ -105,6 +105,25 @@ This client represents the `Core` Flask application itself.
 3.  Go to the `Credentials` tab for the new user, set a password, and turn the `Temporary` switch **OFF**.
 
 
+-   **Create the `admins` group** (if you haven't):
+    -   Go to **Groups** → **Create group**
+    -   Name: `admins`
+    -   Click **Create**
+-   **Add test user to the admins group**:
+    -   Go to **Users** → **user** → **Groups** tab
+    -   Select `admins` and click **Join**
+-   **Make sure the group mapper exists** (this is the only "config" needed):
+    -   Go to **Clients** → **core-client** → **Client scopes**
+    -   Click on **core-client-dedicated**
+    -   If you don't see a mapper for groups, click **Add mapper** → **By configuration** → **Group Membership**
+    -   Configure:
+        -   **Name:** `groups`
+        -   **Token Claim Name:** `groups`
+        -   **Full group path:** OFF (important!)
+        -   **Add to userinfo:** ON
+        -   Click **Save**
+
+
 Keycloak is now ready for the `Core` service.
 
 ## Part 2: HiveMatrix Core Service Setup

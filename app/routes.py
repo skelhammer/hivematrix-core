@@ -12,10 +12,8 @@ def home():
 
 @app.route('/login')
 def login():
-    # Store the 'next' URL from query param to redirect after login
     next_url = request.args.get('next')
     session['next_url'] = next_url
-
     redirect_uri = url_for('auth', _external=True)
     return oauth.keycloak.authorize_redirect(redirect_uri)
 
@@ -24,7 +22,19 @@ def auth():
     token = oauth.keycloak.authorize_access_token()
     user_info = token.get('userinfo')
 
-    # --- Create our own HiveMatrix JWT ---
+    # --- Determine permission level from Keycloak groups ---
+    groups = user_info.get('groups', [])
+    
+    # Check group membership for permission level
+    if 'admins' in groups or '/admins' in groups:
+        permission_level = 'admin'
+    elif 'technicians' in groups or '/technicians' in groups:
+        permission_level = 'technician'
+    elif 'billing' in groups or '/billing' in groups:
+        permission_level = 'billing'
+    else:
+        permission_level = 'client'
+
     private_key = current_app.config['JWT_PRIVATE_KEY']
 
     payload = {
@@ -33,8 +43,10 @@ def auth():
         'name': user_info['name'],
         'email': user_info['email'],
         'preferred_username': user_info['preferred_username'],
+        'permission_level': permission_level,
+        'groups': groups,  # Include groups in JWT for reference
         'iat': int(time.time()),
-        'exp': int(time.time()) + 3600, # Expires in 1 hour
+        'exp': int(time.time()) + 3600,
     }
 
     headers = {
@@ -48,15 +60,12 @@ def auth():
         headers=headers
     )
 
-    # Redirect back to the service that initiated login (e.g., Nexus)
     next_url = session.pop('next_url', None)
     if next_url:
-        # Pass our new token back to the client app
         return redirect(f"{next_url}?token={hivematrix_token}")
 
     session['user'] = user_info
     return redirect(url_for('home'))
-
 
 @app.route('/logout')
 def logout():
@@ -68,65 +77,52 @@ def logout():
 
 @app.route('/service-token', methods=['POST'])
 def service_token():
-    """
-    Mints a service-to-service JWT token.
-    This endpoint is NOT protected because services need to call it before they have a token.
-    Security is provided by the fact that this endpoint is only accessible within the internal network.
-
-    In production, you should add IP whitelisting or a shared secret for additional security.
-    """
     data = request.get_json()
     calling_service = data.get('calling_service')
     target_service = data.get('target_service')
-
+    
     if not calling_service or not target_service:
         return jsonify({'error': 'calling_service and target_service are required'}), 400
-
+    
     private_key = current_app.config['JWT_PRIVATE_KEY']
-
+    
     payload = {
         'iss': current_app.config['JWT_ISSUER'],
         'sub': f'service:{calling_service}',
         'calling_service': calling_service,
         'target_service': target_service,
-        'type': 'service',  # Distinguishes from user tokens
+        'type': 'service',
         'iat': int(time.time()),
-        'exp': int(time.time()) + 300,  # 5 minute expiration for service calls
+        'exp': int(time.time()) + 300,
     }
-
+    
     headers = {
         "kid": "hivematrix-signing-key-1"
     }
-
+    
     token = jwt.encode(
         payload,
         private_key,
         algorithm=current_app.config['JWT_ALGORITHM'],
         headers=headers
     )
-
+    
     return jsonify({'token': token}), 200
 
 @app.route('/.well-known/jwks.json')
 def jwks():
-    """
-    Exposes the public key in JWKS format for other services to verify tokens.
-    """
     public_key = current_app.config['JWT_PUBLIC_KEY']
-
-    # Load the PEM public key
     public_key_obj = serialization.load_pem_public_key(public_key)
     public_numbers = public_key_obj.public_numbers()
 
-    # Helper to encode numbers to Base64URL format
     def int_to_base64url(n):
         return base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, 'big')).rstrip(b'=').decode('utf-8')
 
     jwk = {
         "kty": "RSA",
         "alg": current_app.config['JWT_ALGORITHM'],
-        "kid": "hivematrix-signing-key-1", # Key ID
-        "use": "sig", # Signature
+        "kid": "hivematrix-signing-key-1",
+        "use": "sig",
         "n": int_to_base64url(public_numbers.n),
         "e": int_to_base64url(public_numbers.e),
     }

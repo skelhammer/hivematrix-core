@@ -1,151 +1,84 @@
+# HiveMatrix Core
 
-# hivematrix-core
+**Identity and Access Management (IAM) Hub**
 
-Core of Hivematrix. This service is the central Identity and Access Management (IAM) hub.
+Core is the central IAM service for the HiveMatrix ecosystem. It acts as an abstraction layer in front of Keycloak, handling all authentication and authorization for the platform.
 
-It acts as an **abstraction layer** in front of a **Keycloak** backend. All other HiveMatrix services (like Nexus, Resolve, etc.) will communicate **only with Core** for authentication and user information. This decouples the rest of the platform from the underlying IAM provider.
+---
 
-## Architecture Overview
+## Quick Start
 
-The authentication flow is as follows:
+**For first-time setup of the entire HiveMatrix ecosystem:**
 
-1.  A user attempts to access a protected resource in `Nexus`.
+👉 **Start with [hivematrix-helm](../hivematrix-helm/README.md)** 👈
 
-2.  `Nexus` redirects the user to `Core`'s `/login` endpoint.
+Helm is the orchestration center that will guide you through setting up Keycloak, Core, Nexus, and all other services.
 
-3.  `Core` initiates an OpenID Connect (OIDC) login flow, redirecting the user to the Keycloak login page.
+---
 
-4.  The user authenticates with Keycloak.
+## What Core Does
 
-5.  Keycloak redirects the user back to a callback endpoint on `Core`.
+- **Authentication Proxy**: Abstracts Keycloak behind a simple API
+- **JWT Minting**: Issues HiveMatrix JWTs for authenticated users and service-to-service calls
+- **User Management**: Provides unified user information across all services
+- **Permission Levels**: Manages admin, technician, billing, and client access levels
+- **Public Key Distribution**: Exposes JWKS endpoint for JWT verification by other services
 
-6.  `Core` exchanges the authorization code from Keycloak for an access token and stores the user's session information.
+---
 
-7.  `Core` redirects the user back to the original page they were trying to access in `Nexus`.
+## Architecture
 
+See [ARCHITECTURE.md](../hivematrix-helm/ARCHITECTURE.md) for complete system architecture and development guidelines.
 
-## Part 1: Keycloak Backend Setup
+### Authentication Flow
 
-Follow these steps to install and configure the Keycloak instance that Core will communicate with.
+1. User accesses protected resource in Nexus
+2. Nexus redirects to Core `/login`
+3. Core redirects to Keycloak for authentication
+4. Keycloak authenticates user and returns to Core `/auth` callback
+5. Core mints HiveMatrix JWT with user info and permission level
+6. Core redirects back to Nexus with JWT
+7. Nexus stores JWT and user can access protected resources
+8. Services verify JWT using Core's public key from `/.well-known/jwks.json`
 
-### 1.1 Prerequisites
+---
 
-```
-sudo apt update
-sudo apt install -y openjdk-17-jre-headless wget unzip
+## Prerequisites
 
-```
+- **Python 3.8+**
+- **Keycloak 26.0.5+** (managed by Helm)
+- **OpenSSL** (for generating RSA keys)
 
-### 1.2 Native Installation & Running
+---
 
-```
-# Download and unpack
-wget https://github.com/keycloak/keycloak/releases/download/26.3.5/keycloak-26.3.5.zip
-unzip keycloak-26.3.5.zip
+## Installation
 
-# Set initial admin credentials (first run only)
-export KEYCLOAK_ADMIN=admin
-export KEYCLOAK_ADMIN_PASSWORD=admin
+### 1. Clone and Setup
 
-# Start the server
-cd keycloak-26.3.5/bin/
-./kc.sh start-dev
-
-```
-
-Access the Admin Console at http://localhost:8080 and log in with `admin` / `admin`.
-
-### 1.3 Keycloak Configuration for Core
-
-#### A. Create the `hivematrix` Realm
-
-1.  Manage realms -> Create Realm
-
-2.  **Realm name:**  `hivematrix`
-
-3.  Click `Create`.
-
-
-#### B. Create and Configure the `core-client`
-
-This client represents the `Core` Flask application itself.
-
-1.  In the `hivematrix` realm, go to `Clients` and click `Create client`.
-
-2.  **Client ID:**  `core-client`
-
-3.  **Name:**  `HiveMatrix Core Service`
-
-4.  Click `Next`.
-
-5.  Ensure `Standard flow` is checked.
-
-6.  Toggle "Client authentication" to ON and hit next.
-
-7.  In the **Valid redirect URIs** field, enter the callback URL for our Flask app:
-
-    -   `http://127.0.0.1:5000/auth`
-
-8.  Click `Save`.
-
-
-#### C. Get the Client Secret
-
-1.  After saving, a `Credentials` tab will appear.
-
-2.  Click it and copy the `Client secret`. You will need this for the Flask app's configuration.
-
-
-#### D. Create a Test User
-
-1.  Go to `Users` -> `Create new user`.
-
-2.  Enter a username (e.g., `dhamner`).
-
-3.  Go to the `Credentials` tab for the new user, set a password, and turn the `Temporary` switch **OFF**.
-
-
--   **Create the `admins` group** (if you haven't):
-    -   Go to **Groups** → **Create group**
-    -   Name: `admins`
-    -   Click **Create**
--   **Add test user to the admins group**:
-    -   Go to **Users** → **user** → **Groups** tab
-    -   Select `admins` and click **Join**
--   **Make sure the group mapper exists** (this is the only "config" needed):
-    -   Go to **Clients** → **core-client** → **Client scopes**
-    -   Click on **core-client-dedicated**
-    -   If you don't see a mapper for groups, click **Add mapper** → **By configuration** → **Group Membership**
-    -   Configure:
-        -   **Name:** `groups`
-        -   **Token Claim Name:** `groups`
-        -   **Full group path:** OFF (important!)
-        -   **Add to userinfo:** ON
-        -   Click **Save**
-
-
-Keycloak is now ready for the `Core` service.
-
-## Part 2: HiveMatrix Core Service Setup
-
-Follow these steps to run the Python Flask application that serves as the proxy to Keycloak.
-
-### 2.1 Install Dependencies
-
-Create a virtual environment and install the required packages.
-
-```
-python -m venv pyenv
+```bash
+cd /home/david/work/hivematrix-core
+python3 -m venv pyenv
 source pyenv/bin/activate
 pip install -r requirements.txt
-
 ```
 
-### 2.2 Configure Environment Variables
+### 2. Generate RSA Keys
 
-Create a `.flaskenv` file in the root directory with the following content. Replace `<YOUR_CLIENT_SECRET>` with the one you copied from Keycloak.
+Core uses RS256 JWT signing. Generate the key pair:
 
+```bash
+# Generate 2048-bit RSA private key
+openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
+
+# Extract public key
+openssl rsa -pubout -in private_key.pem -out public_key.pem
 ```
+
+### 3. Configure Environment
+
+Create `.flaskenv`:
+
+```bash
 FLASK_APP=run.py
 FLASK_ENV=development
 SECRET_KEY='a-very-secret-key-for-flask-sessions'
@@ -153,30 +86,169 @@ SECRET_KEY='a-very-secret-key-for-flask-sessions'
 # Keycloak OIDC Settings
 KEYCLOAK_SERVER_URL='http://localhost:8080/realms/hivematrix'
 KEYCLOAK_CLIENT_ID='core-client'
-KEYCLOAK_CLIENT_SECRET='<YOUR_CLIENT_SECRET>'
+KEYCLOAK_CLIENT_SECRET='<YOUR_CLIENT_SECRET_FROM_KEYCLOAK>'
 
 # JWT Signing Settings
 JWT_PRIVATE_KEY_FILE='private_key.pem'
 JWT_PUBLIC_KEY_FILE='public_key.pem'
 JWT_ISSUER='hivematrix.core'
 JWT_ALGORITHM='RS256'
-
-```
-### 2.3 Gen keys
-
-```
-# Generate a 2048-bit RSA private key
-openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
-
-# Extract the public key from the private key
-openssl rsa -pubout -in private_key.pem -out public_key.pem
 ```
 
-### 2.4 Run the Core Service
+**Get the client secret from Keycloak:**
+1. Go to Keycloak Admin Console (http://localhost:8080)
+2. Navigate to: Realms → hivematrix → Clients → core-client → Credentials tab
+3. Copy the Client Secret value
 
-```
+### 4. Run Core
+
+```bash
 flask run
-
 ```
 
-The Core service will now be running on `http://localhost:5000`. You can test the login flow by navigating to this URL.
+Core runs on **http://localhost:5000**
+
+---
+
+## API Endpoints
+
+### Authentication
+
+- `GET /login` - Initiates Keycloak login flow
+- `GET /auth` - Keycloak callback (receives auth code, mints JWT)
+- `GET /logout` - Ends user session and redirects to Keycloak logout
+
+### Public Key Distribution
+
+- `GET /.well-known/jwks.json` - Public keys for JWT verification (used by all services)
+
+### Service Token Minting
+
+- `POST /service-token` - Mints short-lived service-to-service JWTs
+
+Request body:
+```json
+{
+  "calling_service": "treasury",
+  "target_service": "codex"
+}
+```
+
+Response:
+```json
+{
+  "token": "eyJ..."
+}
+```
+
+### User Information
+
+- `GET /userinfo` - Returns current user's information (requires valid JWT)
+
+---
+
+## Keycloak Configuration
+
+Core requires the following Keycloak setup (automatically done by Helm):
+
+### Realm: `hivematrix`
+
+### Client: `core-client`
+- Client authentication: **ON**
+- Standard flow: **ENABLED**
+- Valid redirect URIs: `http://127.0.0.1:5000/auth`
+
+### Groups (for permission levels)
+- `admins` - Full system access
+- `technicians` - Technical operations
+- `billing` - Financial operations
+- Default (no group) - Client level access
+
+### Client Scope: `core-client-dedicated`
+- Group Membership mapper:
+  - Token Claim Name: `groups`
+  - Full group path: **OFF**
+  - Add to userinfo: **ON**
+
+---
+
+## Development
+
+### Adding New Permission Levels
+
+Edit `app/routes.py`, function `mint_hivematrix_jwt()`:
+
+```python
+def get_permission_level(groups):
+    """Map Keycloak groups to HiveMatrix permission levels."""
+    if '/admins' in groups or 'admins' in groups:
+        return 'admin'
+    elif '/technicians' in groups or 'technicians' in groups:
+        return 'technician'
+    elif '/billing' in groups or 'billing' in groups:
+        return 'billing'
+    # Add new levels here
+    else:
+        return 'client'
+```
+
+### Testing JWT Creation
+
+```bash
+curl http://localhost:5000/login
+# Follow login flow in browser
+# Check cookies/session for JWT
+```
+
+### Verifying JWT
+
+```bash
+curl http://localhost:5000/.well-known/jwks.json
+# Returns public keys for verification
+```
+
+---
+
+## Security
+
+- **Private Keys**: Never commit `private_key.pem` to version control (in `.gitignore`)
+- **Client Secrets**: Store in `.flaskenv` (also in `.gitignore`)
+- **Session Keys**: Use strong random value for `SECRET_KEY`
+- **HTTPS**: Use SSL/TLS in production
+- **Key Rotation**: Periodically regenerate RSA keys and update all services
+
+---
+
+## Troubleshooting
+
+### "Invalid client secret" error
+
+1. Regenerate client secret in Keycloak
+2. Update `.flaskenv` with new secret
+3. Restart Core
+
+### JWT verification fails in other services
+
+1. Check that services can reach `http://localhost:5000/.well-known/jwks.json`
+2. Verify services are using correct issuer: `hivematrix.core`
+3. Check JWT hasn't expired (default: 1 hour)
+
+### "Group mapper not found" error
+
+1. Go to Keycloak: Clients → core-client → Client scopes → core-client-dedicated
+2. Add Group Membership mapper with token claim name `groups`
+3. Ensure "Full group path" is OFF
+
+---
+
+## Related Documentation
+
+- **[HiveMatrix Helm](../hivematrix-helm/README.md)** - Service orchestration and setup
+- **[Architecture Guide](../hivematrix-helm/ARCHITECTURE.md)** - Complete system architecture
+- **[HiveMatrix Nexus](../hivematrix-nexus/README.md)** - API Gateway
+
+---
+
+## License
+
+See main HiveMatrix LICENSE file

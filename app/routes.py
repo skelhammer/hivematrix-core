@@ -109,6 +109,10 @@ def service_token():
     
     return jsonify({'token': token}), 200
 
+@app.route('/health')
+def health():
+    return jsonify({"status": "healthy", "service": "core"}), 200
+
 @app.route('/.well-known/jwks.json')
 def jwks():
     public_key = current_app.config['JWT_PUBLIC_KEY']

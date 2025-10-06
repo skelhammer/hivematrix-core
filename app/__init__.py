@@ -36,11 +36,16 @@ except FileNotFoundError:
 
 
 oauth = OAuth(app)
+
+# Load Keycloak realm from environment
+keycloak_realm = os.environ.get('KEYCLOAK_REALM', 'hivematrix')
+keycloak_server_url = app.config.get("KEYCLOAK_SERVER_URL")
+
 oauth.register(
     name='keycloak',
     client_id=app.config.get("KEYCLOAK_CLIENT_ID"),
     client_secret=app.config.get("KEYCLOAK_CLIENT_SECRET"),
-    server_metadata_url=f'{app.config.get("KEYCLOAK_SERVER_URL")}/.well-known/openid-configuration',
+    server_metadata_url=f'{keycloak_server_url}/realms/{keycloak_realm}/.well-known/openid-configuration',
     client_kwargs={
         'scope': 'openid email profile'
     }

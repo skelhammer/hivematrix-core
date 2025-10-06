@@ -57,6 +57,16 @@ if [ -z "$DB_PASSWORD" ]; then
     DB_PASSWORD=$(openssl rand -base64 24 | tr -d "=+/" | cut -c1-24)
 fi
 
+# Generate SECRET_KEY if not set in .flaskenv
+if [ -f ".flaskenv" ]; then
+    if ! grep -q "^SECRET_KEY=" .flaskenv; then
+        echo "Generating SECRET_KEY..."
+        SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+        # Add SECRET_KEY after SERVICE_NAME line
+        sed -i "/^SERVICE_NAME=/a SECRET_KEY=$SECRET_KEY" .flaskenv
+    fi
+fi
+
 # Check Python version
 echo -e "${YELLOW}Checking Python...${NC}"
 if ! command -v python3 &> /dev/null; then
@@ -182,7 +192,25 @@ if [ -f "init_db.py" ]; then
 fi
 echo ""
 
-# 3. Sync configuration from Helm (if Helm is installed)
+# 3. Generate JWT keys
+echo "Setting up JWT keys..."
+if [ ! -d "keys" ]; then
+    mkdir -p keys
+fi
+
+if [ ! -f "keys/jwt_private.pem" ] || [ ! -f "keys/jwt_public.pem" ]; then
+    echo "Generating RSA key pair for JWT..."
+    openssl genrsa -out keys/jwt_private.pem 2048 2>/dev/null
+    openssl rsa -in keys/jwt_private.pem -pubout -out keys/jwt_public.pem 2>/dev/null
+    chmod 600 keys/jwt_private.pem
+    chmod 644 keys/jwt_public.pem
+    echo -e "${GREEN}✓ JWT keys generated${NC}"
+else
+    echo "JWT keys already exist"
+fi
+echo ""
+
+# 4. Sync configuration from Helm (if Helm is installed)
 if [ -d "$HELM_DIR" ] && [ -f "$HELM_DIR/config_manager.py" ]; then
     echo "Syncing configuration from Helm..."
     cd "$HELM_DIR"

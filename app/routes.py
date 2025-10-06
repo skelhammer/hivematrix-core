@@ -1,6 +1,7 @@
 import base64
-from flask import url_for, redirect, render_template, session, request, jsonify, current_app
+from flask import url_for, redirect, render_template, session, request, jsonify, current_app, make_response
 from app import app, oauth
+from app.helm_logger import get_helm_logger
 import jwt
 import time
 from cryptography.hazmat.primitives import serialization
@@ -8,23 +9,67 @@ from cryptography.hazmat.primitives import serialization
 @app.route('/')
 def home():
     user = session.get('user')
-    return render_template('home.html', user=user)
+    logger = get_helm_logger()
+    if logger and user:
+        logger.info(f"User {user.get('preferred_username')} accessed home page")
+
+    response = make_response(render_template('home.html', user=user))
+    # Prevent caching to avoid back button issues after logout
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/login')
 def login():
+    logger = get_helm_logger()
     next_url = request.args.get('next')
     session['next_url'] = next_url
+    if logger:
+        logger.info(f"Login initiated, redirect to: {next_url or 'default'}")
     redirect_uri = url_for('auth', _external=True)
     return oauth.keycloak.authorize_redirect(redirect_uri)
 
 @app.route('/auth')
 def auth():
-    token = oauth.keycloak.authorize_access_token()
+    logger = get_helm_logger()
+
+    # Check for errors from Keycloak
+    error = request.args.get('error')
+    if error:
+        error_description = request.args.get('error_description', 'Unknown error')
+        if logger:
+            logger.warning(f"Authentication error: {error} - {error_description}")
+
+        # Clear any stale session data
+        session.clear()
+
+        # Redirect to login to try again
+        return redirect(url_for('login', next=session.get('next_url')))
+
+    try:
+        token = oauth.keycloak.authorize_access_token()
+    except Exception as e:
+        if logger:
+            logger.error(f"Failed to get access token: {e}")
+
+        # Clear session and redirect to login
+        session.clear()
+        return redirect(url_for('login', next=session.get('next_url')))
+
     user_info = token.get('userinfo')
+
+    if logger:
+        logger.info(f"User authenticated: {user_info.get('preferred_username')}")
+
+    # Store tokens for logout
+    session['id_token'] = token.get('id_token')
+    session['refresh_token'] = token.get('refresh_token')
+    session['access_token'] = token.get('access_token')
 
     # --- Determine permission level from Keycloak groups ---
     groups = user_info.get('groups', [])
-    
+
     # Check group membership for permission level
     if 'admins' in groups or '/admins' in groups:
         permission_level = 'admin'
@@ -69,11 +114,83 @@ def auth():
 
 @app.route('/logout')
 def logout():
-    session.pop('user', None)
+    import requests
+    logger = get_helm_logger()
+
+    # Get tokens and user before clearing session
+    refresh_token = session.get('refresh_token')
+    access_token = session.get('access_token')
+    user = session.get('user')
+
+    if logger and user:
+        logger.info(f"User {user.get('preferred_username')} logging out")
+
     keycloak_server_url = app.config.get("KEYCLOAK_SERVER_URL")
-    post_logout_redirect_uri = url_for('home', _external=True)
-    logout_url = f"{keycloak_server_url}/protocol/openid-connect/logout?post_logout_redirect_uri={post_logout_redirect_uri}"
-    return redirect(logout_url)
+    client_id = app.config.get("KEYCLOAK_CLIENT_ID")
+    client_secret = app.config.get("KEYCLOAK_CLIENT_SECRET")
+
+    # Revoke both tokens to fully invalidate the session
+    tokens_to_revoke = []
+    if refresh_token:
+        tokens_to_revoke.append(('refresh_token', refresh_token))
+    if access_token:
+        tokens_to_revoke.append(('access_token', access_token))
+
+    for token_type, token in tokens_to_revoke:
+        try:
+            revoke_url = f"{keycloak_server_url}/protocol/openid-connect/revoke"
+
+            response = requests.post(
+                revoke_url,
+                data={
+                    'token': token,
+                    'token_type_hint': token_type,
+                    'client_id': client_id,
+                    'client_secret': client_secret
+                },
+                timeout=5
+            )
+
+            if logger:
+                if response.status_code == 200:
+                    logger.info(f"{token_type} revoked successfully")
+                else:
+                    logger.warning(f"{token_type} revocation returned status {response.status_code}: {response.text}")
+        except Exception as e:
+            if logger:
+                logger.error(f"Error revoking {token_type}: {e}")
+
+    # Get redirect URL from query parameter, default to home
+    redirect_url = request.args.get('redirect', url_for('home'))
+
+    # Get id_token before clearing session
+    id_token = session.get('id_token')
+
+    # Clear Flask session
+    session.clear()
+
+    # If we have an id_token, redirect to Keycloak logout which will then redirect to our target
+    if id_token:
+        from urllib.parse import quote
+        keycloak_realm = app.config.get("KEYCLOAK_REALM", "hivematrix")
+        logout_url = f"{keycloak_server_url}/realms/{keycloak_realm}/protocol/openid-connect/logout"
+        logout_redirect = f"{logout_url}?id_token_hint={id_token}&post_logout_redirect_uri={quote(redirect_url)}"
+
+        response = make_response(redirect(logout_redirect))
+    else:
+        # No id_token, just redirect directly
+        if logger:
+            logger.warning("No id_token found, skipping Keycloak logout")
+        response = make_response(redirect(redirect_url))
+
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+
+    # Explicitly delete the session cookie
+    response.set_cookie('session', '', expires=0, max_age=0, path='/')
+
+    return response
 
 @app.route('/service-token', methods=['POST'])
 def service_token():

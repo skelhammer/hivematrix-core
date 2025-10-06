@@ -7,6 +7,12 @@ app = Flask(__name__)
 # --- Explicitly load all required configuration from environment variables ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 
+# Session configuration
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
+
 # Keycloak Settings
 app.config['KEYCLOAK_SERVER_URL'] = os.environ.get('KEYCLOAK_SERVER_URL')
 app.config['KEYCLOAK_CLIENT_ID'] = os.environ.get('KEYCLOAK_CLIENT_ID')
@@ -51,4 +57,17 @@ oauth.register(
     }
 )
 
+# Initialize Helm logger for centralized logging
+app.config['SERVICE_NAME'] = os.environ.get('SERVICE_NAME', 'core')
+app.config['HELM_SERVICE_URL'] = os.environ.get('HELM_SERVICE_URL', 'http://localhost:5004')
+
+from app.helm_logger import init_helm_logger
+helm_logger = init_helm_logger(
+    app.config['SERVICE_NAME'],
+    app.config['HELM_SERVICE_URL']
+)
+
 from app import routes
+
+# Log service startup
+helm_logger.info(f"{app.config['SERVICE_NAME']} service started")

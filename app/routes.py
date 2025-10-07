@@ -1,4 +1,6 @@
 import base64
+import os
+import requests
 from flask import url_for, redirect, render_template, session, request, jsonify, current_app, make_response
 from app import app, oauth
 from app.helm_logger import get_helm_logger
@@ -225,6 +227,95 @@ def service_token():
     )
     
     return jsonify({'token': token}), 200
+
+@app.route('/api/token/exchange', methods=['POST'])
+def token_exchange():
+    """
+    Exchange a Keycloak access token for a HiveMatrix JWT.
+    This allows Nexus to handle OAuth flow and request JWT from Core.
+    """
+    logger = get_helm_logger()
+
+    # Get the Keycloak access token from the request
+    data = request.get_json() or {}
+    access_token = data.get('access_token')
+
+    if not access_token:
+        # Try to get from Authorization header
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            access_token = auth_header[7:]
+
+    if not access_token:
+        return jsonify({'error': 'No access token provided'}), 400
+
+    # Verify the access token with Keycloak and get user info
+    keycloak_server_url = app.config.get("KEYCLOAK_SERVER_URL")
+    keycloak_realm = os.environ.get('KEYCLOAK_REALM', 'hivematrix')
+
+    try:
+        # Get user info from Keycloak using the access token
+        userinfo_url = f"{keycloak_server_url}/realms/{keycloak_realm}/protocol/openid-connect/userinfo"
+        user_response = requests.get(
+            userinfo_url,
+            headers={'Authorization': f'Bearer {access_token}'}
+        )
+
+        if user_response.status_code != 200:
+            if logger:
+                logger.error(f"Failed to get user info from Keycloak: {user_response.status_code}")
+            return jsonify({'error': 'Invalid access token'}), 401
+
+        user_info = user_response.json()
+
+        # Determine permission level from groups
+        groups = user_info.get('groups', [])
+
+        if 'admins' in groups or '/admins' in groups:
+            permission_level = 'admin'
+        elif 'technicians' in groups or '/technicians' in groups:
+            permission_level = 'technician'
+        elif 'billing' in groups or '/billing' in groups:
+            permission_level = 'billing'
+        else:
+            permission_level = 'client'
+
+        # Generate HiveMatrix JWT
+        private_key = current_app.config['JWT_PRIVATE_KEY']
+
+        payload = {
+            'iss': current_app.config['JWT_ISSUER'],
+            'sub': user_info['sub'],
+            'name': user_info.get('name', ''),
+            'email': user_info.get('email', ''),
+            'preferred_username': user_info.get('preferred_username', ''),
+            'permission_level': permission_level,
+            'groups': groups,
+            'iat': int(time.time()),
+            'exp': int(time.time()) + 3600,
+        }
+
+        headers = {
+            "kid": "hivematrix-signing-key-1"
+        }
+
+        hivematrix_token = jwt.encode(
+            payload,
+            private_key,
+            algorithm=current_app.config['JWT_ALGORITHM'],
+            headers=headers
+        )
+
+        if logger:
+            logger.info(f"Issued JWT for user {user_info.get('preferred_username')}")
+
+        return jsonify({'token': hivematrix_token}), 200
+
+    except Exception as e:
+        if logger:
+            logger.error(f"Token exchange error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/health')
 def health():

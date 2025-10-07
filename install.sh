@@ -151,11 +151,17 @@ echo ""
 # 2. Initialize database schema
 echo "Initializing database schema..."
 
+# Generate a random SECRET_KEY for Flask sessions
+SECRET_KEY=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+
 # Create .flaskenv for init_db.py
 cat > .flaskenv <<EOF
 FLASK_APP=run.py
 FLASK_ENV=development
 SERVICE_NAME=core
+
+# Secret key for Flask sessions
+SECRET_KEY=$SECRET_KEY
 
 # Database
 DB_HOST=localhost

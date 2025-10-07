@@ -285,12 +285,25 @@ def token_exchange():
         else:
             permission_level = 'client'
 
-        # Generate HiveMatrix JWT
+        # Create a session for this user
+        session_manager = current_app.config['SESSION_MANAGER']
+        user_session_data = {
+            'sub': user_info['sub'],
+            'name': user_info.get('name', ''),
+            'email': user_info.get('email', ''),
+            'preferred_username': user_info.get('preferred_username', ''),
+            'permission_level': permission_level,
+            'groups': groups
+        }
+        session_id = session_manager.create_session(user_session_data)
+
+        # Generate HiveMatrix JWT with session ID
         private_key = current_app.config['JWT_PRIVATE_KEY']
 
         payload = {
             'iss': current_app.config['JWT_ISSUER'],
             'sub': user_info['sub'],
+            'jti': session_id,  # JWT ID - used for session revocation
             'name': user_info.get('name', ''),
             'email': user_info.get('email', ''),
             'preferred_username': user_info.get('preferred_username', ''),
@@ -319,6 +332,113 @@ def token_exchange():
     except Exception as e:
         if logger:
             logger.error(f"Token exchange error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/token/validate', methods=['POST'])
+def token_validate():
+    """
+    Validate that a token's session is still active.
+    Returns user data if valid, error if revoked or expired.
+    """
+    logger = get_helm_logger()
+
+    # Get token from request
+    data = request.get_json() or {}
+    token = data.get('token')
+
+    if not token:
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+
+    if not token:
+        return jsonify({'error': 'No token provided', 'valid': False}), 400
+
+    try:
+        # Decode token to get session_id (jti)
+        public_key = current_app.config['JWT_PUBLIC_KEY']
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=[current_app.config['JWT_ALGORITHM']],
+            options={"verify_exp": True}
+        )
+
+        session_id = payload.get('jti')
+        if not session_id:
+            return jsonify({'error': 'Token has no session ID', 'valid': False}), 401
+
+        # Check if session is still valid
+        session_manager = current_app.config['SESSION_MANAGER']
+        session_data = session_manager.validate_session(session_id)
+
+        if not session_data:
+            if logger:
+                logger.info(f"Session {session_id} invalid or revoked")
+            return jsonify({'error': 'Session expired or revoked', 'valid': False}), 401
+
+        return jsonify({'valid': True, 'user': session_data}), 200
+
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'Token expired', 'valid': False}), 401
+    except jwt.InvalidTokenError as e:
+        return jsonify({'error': f'Invalid token: {str(e)}', 'valid': False}), 401
+    except Exception as e:
+        if logger:
+            logger.error(f"Token validation error: {e}")
+        return jsonify({'error': str(e), 'valid': False}), 500
+
+
+@app.route('/api/token/revoke', methods=['POST'])
+def token_revoke():
+    """
+    Revoke a token's session (logout).
+    """
+    logger = get_helm_logger()
+
+    # Get token from request
+    data = request.get_json() or {}
+    token = data.get('token')
+
+    if not token:
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+
+    if not token:
+        return jsonify({'error': 'No token provided'}), 400
+
+    try:
+        # Decode token to get session_id (jti)
+        public_key = current_app.config['JWT_PUBLIC_KEY']
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=[current_app.config['JWT_ALGORITHM']],
+            options={"verify_exp": False}  # Allow revoking expired tokens
+        )
+
+        session_id = payload.get('jti')
+        if not session_id:
+            return jsonify({'error': 'Token has no session ID'}), 400
+
+        # Revoke the session
+        session_manager = current_app.config['SESSION_MANAGER']
+        revoked = session_manager.revoke_session(session_id)
+
+        if revoked:
+            if logger:
+                logger.info(f"Session {session_id} revoked by user {payload.get('preferred_username')}")
+            return jsonify({'message': 'Session revoked successfully'}), 200
+        else:
+            return jsonify({'message': 'Session not found or already revoked'}), 404
+
+    except jwt.InvalidTokenError as e:
+        return jsonify({'error': f'Invalid token: {str(e)}'}), 401
+    except Exception as e:
+        if logger:
+            logger.error(f"Token revocation error: {e}")
         return jsonify({'error': str(e)}), 500
 
 

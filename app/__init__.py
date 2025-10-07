@@ -67,6 +67,11 @@ helm_logger = init_helm_logger(
     app.config['HELM_SERVICE_URL']
 )
 
+# Initialize session manager for revokable tokens
+from app.session_manager import SessionManager
+session_manager = SessionManager(max_session_lifetime=3600)  # 1 hour sessions
+app.config['SESSION_MANAGER'] = session_manager
+
 from app import routes
 
 # Log service startup

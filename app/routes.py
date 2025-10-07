@@ -7,6 +7,8 @@ from app.helm_logger import get_helm_logger
 import jwt
 import time
 from cryptography.hazmat.primitives import serialization
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 @app.route('/')
 def home():
@@ -250,15 +252,18 @@ def token_exchange():
         return jsonify({'error': 'No access token provided'}), 400
 
     # Verify the access token with Keycloak and get user info
-    keycloak_server_url = app.config.get("KEYCLOAK_SERVER_URL")
+    # Use Nexus URL for consistency with token issuer
+    nexus_url = app.config.get("NEXUS_SERVICE_URL", "https://localhost")
     keycloak_realm = os.environ.get('KEYCLOAK_REALM', 'hivematrix')
 
     try:
-        # Get user info from Keycloak using the access token
-        userinfo_url = f"{keycloak_server_url}/realms/{keycloak_realm}/protocol/openid-connect/userinfo"
+        # Get user info from Keycloak through Nexus proxy
+        # This ensures the token issuer matches what Keycloak expects
+        userinfo_url = f"{nexus_url}/keycloak/realms/{keycloak_realm}/protocol/openid-connect/userinfo"
         user_response = requests.get(
             userinfo_url,
-            headers={'Authorization': f'Bearer {access_token}'}
+            headers={'Authorization': f'Bearer {access_token}'},
+            verify=False  # Accept self-signed cert for local dev
         )
 
         if user_response.status_code != 200:

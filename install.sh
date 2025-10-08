@@ -151,6 +151,12 @@ echo ""
 # 2. Initialize database schema
 echo "Initializing database schema..."
 
+# Check if .flaskenv exists and preserve client secret
+EXISTING_CLIENT_SECRET=""
+if [ -f ".flaskenv" ]; then
+    EXISTING_CLIENT_SECRET=$(grep "^KEYCLOAK_CLIENT_SECRET=" .flaskenv | cut -d'=' -f2 || true)
+fi
+
 # Generate a random SECRET_KEY for Flask sessions
 SECRET_KEY=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
 
@@ -175,8 +181,11 @@ KEYCLOAK_REALM=hivematrix
 KEYCLOAK_CLIENT_ID=core-client
 EOF
 
-# Add client secret if provided
-if [ -n "$KEYCLOAK_CLIENT_SECRET" ]; then
+# Add client secret - use existing one if available, or from parameter
+if [ -n "$EXISTING_CLIENT_SECRET" ]; then
+    echo "KEYCLOAK_CLIENT_SECRET=$EXISTING_CLIENT_SECRET" >> .flaskenv
+    echo "  ✓ Preserved existing Keycloak client secret"
+elif [ -n "$KEYCLOAK_CLIENT_SECRET" ]; then
     echo "KEYCLOAK_CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'" >> .flaskenv
 fi
 

@@ -22,5 +22,8 @@
     },
     "brainhair": {
         "url": "http://localhost:5050"
+    },
+    "archive": {
+        "url": "http://localhost:5012"
     }
 }

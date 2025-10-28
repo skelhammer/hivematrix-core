@@ -5,25 +5,22 @@
     "helm": {
         "url": "http://localhost:5004"
     },
-    "core": {
-        "url": "http://localhost:5000"
-    },
     "nexus": {
         "url": "https://localhost:443"
-    },
-    "codex": {
-        "url": "http://localhost:5010"
-    },
-    "ledger": {
-        "url": "http://localhost:5030"
     },
     "knowledgetree": {
         "url": "http://localhost:5020"
     },
+    "core": {
+        "url": "http://localhost:5000"
+    },
+    "ledger": {
+        "url": "http://localhost:5030"
+    },
     "brainhair": {
         "url": "http://localhost:5050"
     },
-    "archive": {
-        "url": "http://localhost:5012"
+    "codex": {
+        "url": "http://localhost:5010"
     }
 }

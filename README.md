@@ -15,7 +15,7 @@ Core works with Keycloak to authenticate users, then issues HiveMatrix-specific 
 
 For installation, configuration, and architecture documentation, please visit:
 
-**[HiveMatrix Documentation](https://Troy Pound.github.io/hivematrix-docs/ARCHITECTURE/)**
+**[HiveMatrix Documentation](https://skelhammer.github.io/hivematrix-docs/ARCHITECTURE/)**
 
 ## Quick Start
 

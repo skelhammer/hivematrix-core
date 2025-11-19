@@ -4,6 +4,11 @@ import os
 
 app = Flask(__name__)
 
+# Configure logging level from environment
+import logging
+log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
+app.logger.setLevel(getattr(logging, log_level, logging.INFO))
+
 # --- Explicitly load all required configuration from environment variables ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 

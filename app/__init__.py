@@ -41,9 +41,11 @@ try:
     with open(app.config['JWT_PUBLIC_KEY_FILE'], 'rb') as f:
         app.config['JWT_PUBLIC_KEY'] = f.read()
 except (KeyError, TypeError):
-    print("WARNING: JWT_PRIVATE_KEY_FILE or JWT_PUBLIC_KEY_FILE not configured in .flaskenv")
+    import logging
+    logging.warning("JWT_PRIVATE_KEY_FILE or JWT_PUBLIC_KEY_FILE not configured in .flaskenv")
 except FileNotFoundError:
-    print("FATAL: JWT Key files not found. Please generate them using 'openssl'.")
+    import logging
+    logging.error("FATAL: JWT Key files not found. Please generate them using 'openssl'.")
 
 
 oauth = OAuth(app)

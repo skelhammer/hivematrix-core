@@ -263,7 +263,8 @@ def token_exchange():
         user_response = requests.get(
             userinfo_url,
             headers={'Authorization': f'Bearer {access_token}'},
-            verify=False  # Accept self-signed cert for local dev
+            verify=False,  # Accept self-signed cert for local dev
+            timeout=10
         )
 
         if user_response.status_code != 200:

@@ -4,6 +4,7 @@ Provides revokable sessions with TTL
 """
 import time
 import secrets
+import random
 from threading import Lock
 
 class SessionManager:
@@ -38,6 +39,10 @@ class SessionManager:
         Check if session is valid (exists, not expired, not revoked).
         Returns session data if valid, None otherwise.
         """
+        # Probabilistic cleanup - run about 1% of validations to prevent memory leak
+        if random.random() < 0.01:
+            self.cleanup_expired()
+
         with self.lock:
             session = self.sessions.get(session_id)
 

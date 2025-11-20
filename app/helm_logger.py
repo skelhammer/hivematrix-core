@@ -114,7 +114,10 @@ class HelmLogger:
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=5
             )
-            if response.status_code != 200:
+            if response.status_code == 401:
+                self.token = None  # Clear cached token so it gets refreshed
+                logging.error(f"Failed to send logs to Helm: {response.status_code} {response.text}")
+            elif response.status_code != 200:
                 logging.error(f"Failed to send logs to Helm: {response.status_code} {response.text}")
         except Exception as e:
             logging.error(f"Error sending logs to Helm: {e}")

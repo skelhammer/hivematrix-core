@@ -79,6 +79,16 @@ from app.session_manager import SessionManager
 session_manager = SessionManager(max_session_lifetime=3600)  # 1 hour sessions
 app.config['SESSION_MANAGER'] = session_manager
 
+from app.version import VERSION, SERVICE_NAME as VERSION_SERVICE_NAME
+
+# Context processor to inject version into all templates
+@app.context_processor
+def inject_version():
+    return {
+        'app_version': VERSION,
+        'app_service_name': VERSION_SERVICE_NAME
+    }
+
 from app import routes
 
 # Log service startup

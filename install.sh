@@ -179,6 +179,9 @@ DB_USER=$DB_USER
 KEYCLOAK_URL=http://localhost:8080
 KEYCLOAK_REALM=hivematrix
 KEYCLOAK_CLIENT_ID=core-client
+
+# SSL Configuration (disable for self-signed certs)
+VERIFY_SSL=False
 EOF
 
 # Add client secret - use existing one if available, or from parameter

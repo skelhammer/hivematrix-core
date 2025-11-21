@@ -1,6 +1,7 @@
 import base64
 import os
 import requests
+import json
 from flask import url_for, redirect, render_template, session, request, jsonify, current_app, make_response
 from app import app, oauth, limiter
 from app.helm_logger import get_helm_logger
@@ -9,6 +10,89 @@ import time
 from cryptography.hazmat.primitives import serialization
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def get_user_homepage(user_email, token):
+    """
+    Get user's preferred home page from Codex with graceful fallback.
+
+    Returns the service slug to redirect to (e.g., 'beacon', 'codex').
+    Falls back through: user preference → beacon → first available service → helm
+    """
+    logger = get_helm_logger()
+    codex_url = current_app.config.get('CODEX_SERVICE_URL', 'http://localhost:5010')
+    verify_ssl = current_app.config.get('VERIFY_SSL', False)
+
+    # Fallback order: beacon → knowledgetree → codex → helm
+    fallback_order = ['beacon', 'knowledgetree', 'codex', 'helm']
+
+    try:
+        # Try to get user's preference from Codex
+        response = requests.get(
+            f"{codex_url}/api/public/user/home-page",
+            params={'email': user_email},
+            headers={'Authorization': f'Bearer {token}'},
+            verify=verify_ssl,
+            timeout=2
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            preferred_page = data.get('home_page', 'beacon')
+
+            # Check if preferred service is available
+            if is_service_available(preferred_page):
+                if logger:
+                    logger.info(f"Redirecting {user_email} to preferred home page: {preferred_page}")
+                return preferred_page
+            else:
+                if logger:
+                    logger.warning(f"Preferred page {preferred_page} not available, falling back")
+
+    except Exception as e:
+        if logger:
+            logger.warning(f"Could not get home page preference from Codex: {e}")
+
+    # Fallback: try services in order
+    for service in fallback_order:
+        if is_service_available(service):
+            if logger:
+                logger.info(f"Using fallback home page: {service}")
+            return service
+
+    # Ultimate fallback: helm (should always be available)
+    if logger:
+        logger.warning("All fallback services unavailable, defaulting to helm")
+    return 'helm'
+
+
+def is_service_available(service_slug):
+    """
+    Check if a service is available by checking if it's in the services config.
+
+    Returns True if the service exists and is visible.
+    """
+    try:
+        # Load services.json to check availability
+        services_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'services.json')
+        if not os.path.exists(services_file):
+            # If no services.json, assume common services exist
+            return service_slug in ['beacon', 'codex', 'helm']
+
+        with open(services_file, 'r') as f:
+            services = json.load(f)
+
+        service_config = services.get(service_slug)
+        if not service_config:
+            return False
+
+        # Check if service is visible (not an infrastructure service)
+        return service_config.get('visible', True)
+
+    except Exception:
+        # If we can't check, assume beacon/codex/helm are available
+        return service_slug in ['beacon', 'codex', 'helm']
+
 
 @app.route('/')
 def home():
@@ -159,8 +243,14 @@ def auth():
     if next_url:
         return redirect(f"{next_url}?token={hivematrix_token}")
 
+    # Get user's home page preference from Codex
+    home_page = get_user_homepage(user_info.get('email'), hivematrix_token)
+
     session['user'] = user_info
-    return redirect(url_for('home'))
+
+    # Redirect to preferred home page with token
+    nexus_url = app.config.get('NEXUS_SERVICE_URL', 'https://localhost')
+    return redirect(f"{nexus_url}/{home_page}/?token={hivematrix_token}")
 
 @app.route('/logout')
 def logout():

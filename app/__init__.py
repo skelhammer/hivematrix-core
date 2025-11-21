@@ -43,11 +43,10 @@ app.config['JWT_ISSUER'] = os.environ.get('JWT_ISSUER')
 app.config['JWT_ALGORITHM'] = os.environ.get('JWT_ALGORITHM')
 
 # SSL Verification Settings
-# In development: Allow self-signed certificates (verify=False)
-# In production: Always verify SSL certificates (verify=True)
-# Default to False for local development (self-signed certs are common)
-environment = os.environ.get('ENVIRONMENT', 'development')
-app.config['VERIFY_SSL'] = (environment == 'production')
+# Default to False for self-signed certificates (common in HiveMatrix deployments)
+# Can be overridden by setting VERIFY_SSL=True in .flaskenv if needed
+verify_ssl_env = os.environ.get('VERIFY_SSL', 'False')
+app.config['VERIFY_SSL'] = verify_ssl_env.lower() in ('true', '1', 'yes')
 # --- End of explicit configuration loading ---
 
 # Validate that the secret key was loaded

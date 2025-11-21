@@ -334,7 +334,7 @@ def logout():
     return response
 
 @app.route('/service-token', methods=['POST'])
-@limiter.limit("100 per minute")  # Allow frequent service calls but prevent DoS
+@limiter.exempt  # Internal service-to-service endpoint, protected by token caching
 def service_token():
     """
     Generate a service-to-service authentication token.
@@ -553,7 +553,7 @@ def token_exchange():
 
 
 @app.route('/api/token/validate', methods=['POST'])
-@limiter.limit("200 per minute")  # High limit for frequent validation calls
+@limiter.exempt  # Internal validation endpoint, called frequently by services
 def token_validate():
     """
     Validate that a token's session is still active.

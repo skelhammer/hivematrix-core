@@ -8,8 +8,16 @@ load_dotenv('.flaskenv')
 
 from app import app
 
-def get_debug_mode():
-    """Read environment from master_config.json to determine debug mode"""
+def get_debug_mode() -> bool:
+    """
+    Read environment from master_config.json to determine debug mode.
+
+    Checks the master_config.json file to see if the environment is set to 'development'.
+    Defaults to False (production mode) if the config file is not found or invalid.
+
+    Returns:
+        bool: True if environment is 'development', False otherwise
+    """
     config_path = os.path.join(os.path.dirname(__file__), 'instance', 'master_config.json')
     try:
         with open(config_path) as f:

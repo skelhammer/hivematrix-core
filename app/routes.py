@@ -2,7 +2,7 @@ import base64
 import os
 import requests
 from flask import url_for, redirect, render_template, session, request, jsonify, current_app, make_response
-from app import app, oauth
+from app import app, oauth, limiter
 from app.helm_logger import get_helm_logger
 import jwt
 import time
@@ -12,6 +12,15 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 @app.route('/')
 def home():
+    """
+    Core service home page.
+
+    Displays the Core service home page with user information if logged in.
+    Sets no-cache headers to prevent back button issues after logout.
+
+    Returns:
+        Response: Rendered home.html template with cache control headers
+    """
     user = session.get('user')
     logger = get_helm_logger()
     if logger and user:
@@ -25,7 +34,20 @@ def home():
     return response
 
 @app.route('/login')
+@limiter.limit("10 per minute")  # Prevent login spam
 def login():
+    """
+    Initiate OAuth2 login flow with Keycloak.
+
+    Redirects the user to Keycloak for authentication. After successful authentication,
+    Keycloak will redirect back to the /auth endpoint.
+
+    Query Parameters:
+        next (str, optional): URL to redirect to after successful login
+
+    Returns:
+        Response: Redirect to Keycloak authorization endpoint
+    """
     logger = get_helm_logger()
     next_url = request.args.get('next')
     session['next_url'] = next_url
@@ -35,7 +57,28 @@ def login():
     return oauth.keycloak.authorize_redirect(redirect_uri)
 
 @app.route('/auth')
+@limiter.limit("20 per minute")  # Prevent auth callback abuse
 def auth():
+    """
+    OAuth2 callback endpoint from Keycloak.
+
+    Handles the authorization callback from Keycloak after user authentication.
+    Exchanges the authorization code for access tokens, determines user permissions,
+    creates a HiveMatrix JWT, and redirects to the requested page or home.
+
+    Permission Levels (based on Keycloak groups):
+        - admin: Members of 'admins' group
+        - technician: Members of 'technicians' group
+        - billing: Members of 'billing' group
+        - client: Default for all other users
+
+    Query Parameters:
+        code (str): Authorization code from Keycloak (handled by OAuth library)
+        error (str, optional): Error code if authentication failed
+
+    Returns:
+        Response: Redirect to next_url with JWT token, or to home page
+    """
     logger = get_helm_logger()
 
     # Check for errors from Keycloak
@@ -72,17 +115,20 @@ def auth():
     session['access_token'] = token.get('access_token')
 
     # --- Determine permission level from Keycloak groups ---
+    # Permission levels control access across all HiveMatrix services
+    # Hierarchy: admin > technician > billing > client
+    # Groups can be in format 'groupname' or '/groupname' depending on Keycloak config
     groups = user_info.get('groups', [])
 
-    # Check group membership for permission level
+    # Check group membership for permission level (order matters - highest first)
     if 'admins' in groups or '/admins' in groups:
-        permission_level = 'admin'
+        permission_level = 'admin'  # Full system access
     elif 'technicians' in groups or '/technicians' in groups:
-        permission_level = 'technician'
+        permission_level = 'technician'  # Technical operations access
     elif 'billing' in groups or '/billing' in groups:
-        permission_level = 'billing'
+        permission_level = 'billing'  # Financial operations access
     else:
-        permission_level = 'client'
+        permission_level = 'client'  # Limited access (default)
 
     private_key = current_app.config['JWT_PRIVATE_KEY']
 
@@ -152,6 +198,7 @@ def logout():
                     'client_id': client_id,
                     'client_secret': client_secret
                 },
+                verify=current_app.config.get('VERIFY_SSL', True),  # Configurable SSL verification
                 timeout=5
             )
 
@@ -197,16 +244,94 @@ def logout():
     return response
 
 @app.route('/service-token', methods=['POST'])
+@limiter.limit("100 per minute")  # Allow frequent service calls but prevent DoS
 def service_token():
+    """
+    Generate a service-to-service authentication token.
+
+    Creates a short-lived JWT (5 minutes) for service-to-service communication.
+    These tokens allow services to call each other's APIs without user context.
+
+    Request JSON Body:
+        calling_service (str): Name of the service requesting the token
+        target_service (str): Name of the service being called
+
+    Returns:
+        JSON: {'token': '<jwt_token>'} with 200 status
+        JSON: {'error': '<message>'} with 400 status if parameters missing
+
+    Example:
+        POST /service-token
+        {
+            "calling_service": "codex",
+            "target_service": "ledger"
+        }
+
+        Response:
+        {
+            "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+        }
+    """
+    import re
+    import json
+    from pathlib import Path
+
+    logger = get_helm_logger()
+
     data = request.get_json()
     calling_service = data.get('calling_service')
     target_service = data.get('target_service')
-    
+
     if not calling_service or not target_service:
         return jsonify({'error': 'calling_service and target_service are required'}), 400
+
+    # Input validation: prevent injection attacks and DoS
+    # Service names must be alphanumeric with hyphens/underscores only, 1-50 chars
+    service_name_pattern = re.compile(r'^[a-z0-9_-]{1,50}$')
+
+    if not service_name_pattern.match(calling_service):
+        if logger:
+            logger.warning(f"Invalid calling_service format: {calling_service[:100]}")
+        return jsonify({'error': 'Invalid calling_service format'}), 400
+
+    if not service_name_pattern.match(target_service):
+        if logger:
+            logger.warning(f"Invalid target_service format: {target_service[:100]}")
+        return jsonify({'error': 'Invalid target_service format'}), 400
+
+    # Validate against known services list (if available)
+    services_file = Path(__file__).parent.parent / 'services.json'
+    if services_file.exists():
+        try:
+            with open(services_file, 'r') as f:
+                known_services = json.load(f)
+
+            if calling_service not in known_services:
+                if logger:
+                    logger.warning(f"Unknown calling_service: {calling_service}")
+                return jsonify({'error': 'Unknown calling_service'}), 400
+
+            if target_service not in known_services:
+                if logger:
+                    logger.warning(f"Unknown target_service: {target_service}")
+                return jsonify({'error': 'Unknown target_service'}), 400
+        except Exception as e:
+            # If we can't read services.json, log but continue with format validation only
+            if logger:
+                logger.warning(f"Could not validate against services.json: {e}")
+
+    # Validation passed
     
     private_key = current_app.config['JWT_PRIVATE_KEY']
-    
+
+    # JWT payload for service-to-service token
+    # iss: Issuer (who created this token)
+    # sub: Subject (what this token represents)
+    # calling_service: Which service is making the call
+    # target_service: Which service is being called
+    # token_type: 'service' distinguishes from user tokens
+    # iat: Issued at timestamp
+    # exp: Expiration (5 minutes from now)
     payload = {
         'iss': current_app.config['JWT_ISSUER'],
         'sub': f'service:{calling_service}',
@@ -214,7 +339,7 @@ def service_token():
         'target_service': target_service,
         'type': 'service',
         'iat': int(time.time()),
-        'exp': int(time.time()) + 300,
+        'exp': int(time.time()) + 300,  # 5 minutes
     }
     
     headers = {
@@ -231,6 +356,7 @@ def service_token():
     return jsonify({'token': token}), 200
 
 @app.route('/api/token/exchange', methods=['POST'])
+@limiter.limit("20 per minute")  # Prevent token exchange brute force
 def token_exchange():
     """
     Exchange a Keycloak access token for a HiveMatrix JWT.
@@ -263,7 +389,7 @@ def token_exchange():
         user_response = requests.get(
             userinfo_url,
             headers={'Authorization': f'Bearer {access_token}'},
-            verify=False,  # Accept self-signed cert for local dev
+            verify=current_app.config.get('VERIFY_SSL', True),  # Configurable SSL verification
             timeout=10
         )
 
@@ -333,10 +459,11 @@ def token_exchange():
     except Exception as e:
         if logger:
             logger.error(f"Token exchange error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/token/validate', methods=['POST'])
+@limiter.limit("200 per minute")  # High limit for frequent validation calls
 def token_validate():
     """
     Validate that a token's session is still active.
@@ -388,7 +515,7 @@ def token_validate():
     except Exception as e:
         if logger:
             logger.error(f"Token validation error: {e}")
-        return jsonify({'error': str(e), 'valid': False}), 500
+        return jsonify({'error': 'Internal server error', 'valid': False}), 500
 
 
 @app.route('/api/token/revoke', methods=['POST'])
@@ -440,15 +567,50 @@ def token_revoke():
     except Exception as e:
         if logger:
             logger.error(f"Token revocation error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/health')
+@limiter.exempt
 def health():
+    """
+    Health check endpoint.
+
+    Returns a simple health status for service monitoring.
+    Used by Helm and load balancers to verify Core is running.
+
+    Returns:
+        JSON: {'status': 'healthy', 'service': 'core'} with 200 status
+    """
     return jsonify({"status": "healthy", "service": "core"}), 200
 
 @app.route('/.well-known/jwks.json')
+@limiter.exempt
 def jwks():
+    """
+    JSON Web Key Set (JWKS) endpoint.
+
+    Publishes Core's public RSA key in JWKS format for JWT signature verification.
+    Other services fetch this on startup to verify HiveMatrix JWT tokens.
+
+    Standard JWKS endpoint following RFC 7517.
+    No authentication required - public key is public information.
+
+    Returns:
+        JSON: JWKS formatted response with RSA public key components (n, e)
+
+    Example Response:
+        {
+            "keys": [{
+                "kty": "RSA",
+                "alg": "RS256",
+                "kid": "hivematrix-signing-key-1",
+                "use": "sig",
+                "n": "0vx7agoebGcQ...",  # RSA modulus (base64url encoded)
+                "e": "AQAB"  # RSA exponent (base64url encoded)
+            }]
+        }
+    """
     public_key = current_app.config['JWT_PUBLIC_KEY']
     public_key_obj = serialization.load_pem_public_key(public_key)
     public_numbers = public_key_obj.public_numbers()

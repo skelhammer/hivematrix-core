@@ -6,11 +6,21 @@ Reads git information to generate version string.
 import subprocess
 import os
 from datetime import datetime
+from typing import Tuple
 
-def get_version():
+def get_version() -> str:
     """
     Get version string in format: YYYY.MM.DD-<short_hash>
-    Example: 2024.11.19-c7f7c81
+
+    Generates a version string based on the git commit date and hash.
+    Falls back to 'unknown' if git information is not available.
+
+    Returns:
+        str: Version string like "2024.11.19-c7f7c81" or "unknown"
+
+    Example:
+        >>> get_version()
+        '2024.11.19-c7f7c81'
     """
     try:
         # Get the directory where this script is located
@@ -47,8 +57,13 @@ def get_version():
     except Exception:
         return "unknown"
 
-def get_service_name():
-    """Get the service name for display."""
+def get_service_name() -> str:
+    """
+    Get the service name for display.
+
+    Returns:
+        str: The service name "Core"
+    """
     return "Core"
 
 # Cache the version at module load time

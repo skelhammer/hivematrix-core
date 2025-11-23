@@ -11,6 +11,11 @@ from cryptography.hazmat.primitives import serialization
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Health check library
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from health_check import HealthChecker
+
 
 def get_user_homepage(user_email, token):
     """
@@ -664,15 +669,33 @@ def token_revoke():
 @limiter.exempt
 def health():
     """
-    Health check endpoint.
+    Comprehensive health check endpoint.
 
-    Returns a simple health status for service monitoring.
-    Used by Helm and load balancers to verify Core is running.
+    Checks:
+    - Redis connectivity (session storage)
+    - Disk space
+    - Keycloak availability
 
     Returns:
-        JSON: {'status': 'healthy', 'service': 'core'} with 200 status
+        JSON: Detailed health status with HTTP 200 (healthy) or 503 (unhealthy/degraded)
     """
-    return jsonify({"status": "healthy", "service": "core"}), 200
+    # Get Redis client if available
+    redis_client = None
+    try:
+        from app import redis_client as app_redis
+        redis_client = app_redis
+    except:
+        pass
+
+    # Initialize health checker
+    # Note: Not checking Keycloak as dependency since it doesn't have a standard /health endpoint
+    # Keycloak availability is checked during actual authentication, not health checks
+    health_checker = HealthChecker(
+        service_name='core',
+        redis_client=redis_client
+    )
+
+    return health_checker.get_health()
 
 @app.route('/.well-known/jwks.json')
 @limiter.exempt

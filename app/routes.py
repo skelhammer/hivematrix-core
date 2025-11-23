@@ -453,9 +453,68 @@ def service_token():
 @app.route('/api/token/exchange', methods=['POST'])
 @limiter.limit("20 per minute")  # Prevent token exchange brute force
 def token_exchange():
-    """
-    Exchange a Keycloak access token for a HiveMatrix JWT.
+    """Exchange a Keycloak access token for a HiveMatrix JWT.
+
     This allows Nexus to handle OAuth flow and request JWT from Core.
+    ---
+    tags:
+      - Authentication
+    summary: Exchange Keycloak token for HiveMatrix JWT
+    description: |
+      Validates a Keycloak OAuth2 access token and returns a HiveMatrix JWT for service access.
+      Used by Nexus after successful OAuth login to get a session token.
+
+      Permission levels are determined by Keycloak groups:
+      - admins → admin
+      - technicians → technician
+      - billing → billing
+      - default → client
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - access_token
+          properties:
+            access_token:
+              type: string
+              description: Keycloak OAuth2 access token
+              example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+    responses:
+      200:
+        description: JWT token generated successfully
+        schema:
+          type: object
+          properties:
+            jwt:
+              type: string
+              description: HiveMatrix JWT token (valid for 1 hour)
+              example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+            user:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: "admin"
+                email:
+                  type: string
+                  example: "admin@example.com"
+                permission_level:
+                  type: string
+                  enum: [admin, technician, billing, client]
+                  example: "admin"
+      400:
+        description: No access token provided
+      401:
+        description: Invalid access token
+      500:
+        description: Internal server error
     """
     logger = get_helm_logger()
 
@@ -560,9 +619,72 @@ def token_exchange():
 @app.route('/api/token/validate', methods=['POST'])
 @limiter.exempt  # Internal validation endpoint, called frequently by services
 def token_validate():
-    """
-    Validate that a token's session is still active.
+    """Validate that a token's session is still active.
+
     Returns user data if valid, error if revoked or expired.
+    ---
+    tags:
+      - Authentication
+    summary: Validate JWT token and check session status
+    description: |
+      Verifies JWT signature, expiration, and checks if the session has been revoked.
+      Called by Nexus on every request to ensure the user's session is still active.
+
+      This endpoint checks:
+      1. JWT signature validity
+      2. Token expiration
+      3. Session revocation status (logout)
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            token:
+              type: string
+              description: HiveMatrix JWT token to validate
+              example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+    responses:
+      200:
+        description: Token is valid and session is active
+        schema:
+          type: object
+          properties:
+            valid:
+              type: boolean
+              example: true
+            user:
+              type: object
+              properties:
+                sub:
+                  type: string
+                  example: "user-uuid-1234"
+                username:
+                  type: string
+                  example: "admin"
+                email:
+                  type: string
+                  example: "admin@example.com"
+                permission_level:
+                  type: string
+                  example: "admin"
+      400:
+        description: No token provided
+      401:
+        description: Token invalid, expired, or session revoked
+        schema:
+          type: object
+          properties:
+            valid:
+              type: boolean
+              example: false
+            error:
+              type: string
+              example: "Session has been revoked"
     """
     logger = get_helm_logger()
 
@@ -615,8 +737,45 @@ def token_validate():
 
 @app.route('/api/token/revoke', methods=['POST'])
 def token_revoke():
-    """
-    Revoke a token's session (logout).
+    """Revoke a token's session (logout).
+    ---
+    tags:
+      - Authentication
+    summary: Revoke JWT token session (logout)
+    description: |
+      Revokes the session associated with a JWT token, effectively logging the user out.
+      After revocation, the token will fail validation even if not yet expired.
+
+      Used by Nexus when user clicks logout.
+    consumes:
+      - application/json
+    produces:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            token:
+              type: string
+              description: HiveMatrix JWT token to revoke
+              example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+    responses:
+      200:
+        description: Session revoked successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Session revoked successfully"
+      400:
+        description: No token provided
+      401:
+        description: Invalid token
+      500:
+        description: Internal server error
     """
     logger = get_helm_logger()
 

@@ -1,13 +1,12 @@
 from flask import Flask
 from authlib.integrations.flask_client import OAuth
 from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 import os
 
 app = Flask(__name__)
 
 # Initialize rate limiter to prevent brute force and DoS attacks
-# Uses remote address as key (X-Forwarded-For header trusted via ProxyFix)
+# Uses per-user rate limiting (user ID from JWT) with IP fallback
 # Try Redis first, fall back to memory if Redis unavailable
 try:
     import redis
@@ -19,9 +18,12 @@ except (redis.ConnectionError, redis.TimeoutError, ImportError):
     storage_uri = "memory://"
     print("Flask-Limiter: Redis unavailable, using in-memory storage")
 
+# Import per-user rate limiting key function
+from app.rate_limit_key import get_user_id_or_ip
+
 limiter = Limiter(
     app=app,
-    key_func=get_remote_address,
+    key_func=get_user_id_or_ip,  # Per-user rate limiting
     default_limits=["200 per day", "50 per hour"],
     storage_uri=storage_uri
 )

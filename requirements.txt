@@ -6,3 +6,4 @@ cryptography>=3.4.7
 requests
 Flask-Limiter==3.5.0
 redis==5.0.1
+flasgger==0.9.7.1

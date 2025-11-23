@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="HiveMatrix Core - Authentication and service registry hub for JWT token management and Keycloak integration.">
+    <title>{% block title %}Core{% endblock %} - HiveMatrix</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Skip to main content link for accessibility -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <main id="main-content" role="main" aria-label="Main content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="version-footer" role="contentinfo">
+        <span class="version-footer__text">{{ app_service_name }} v{{ app_version }}</span>
+    </footer>
+
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

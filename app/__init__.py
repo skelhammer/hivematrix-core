@@ -8,11 +8,22 @@ app = Flask(__name__)
 
 # Initialize rate limiter to prevent brute force and DoS attacks
 # Uses remote address as key (X-Forwarded-For header trusted via ProxyFix)
+# Try Redis first, fall back to memory if Redis unavailable
+try:
+    import redis
+    redis_client = redis.Redis(host='localhost', port=6379, socket_connect_timeout=2)
+    redis_client.ping()
+    storage_uri = "redis://localhost:6379"
+    print("Flask-Limiter: Using Redis for rate limiting")
+except (redis.ConnectionError, redis.TimeoutError, ImportError):
+    storage_uri = "memory://"
+    print("Flask-Limiter: Redis unavailable, using in-memory storage")
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"  # For production, use Redis: "redis://localhost:6379"
+    storage_uri=storage_uri
 )
 
 # Configure logging level from environment

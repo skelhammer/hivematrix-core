@@ -5,3 +5,4 @@ PyJWT==2.8.0
 cryptography>=3.4.7
 requests
 Flask-Limiter==3.5.0
+redis==5.0.1

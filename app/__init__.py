@@ -31,6 +31,13 @@ import logging
 log_level = os.environ.get('LOG_LEVEL', 'INFO').upper()
 app.logger.setLevel(getattr(logging, log_level, logging.INFO))
 
+# Enable structured JSON logging with correlation IDs
+# Set ENABLE_JSON_LOGGING=false in environment to disable for development
+enable_json = os.environ.get("ENABLE_JSON_LOGGING", "true").lower() in ("true", "1", "yes")
+if enable_json:
+    from app.structured_logger import setup_structured_logging
+    setup_structured_logging(app, enable_json=True)
+
 # --- Explicitly load all required configuration from environment variables ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
 

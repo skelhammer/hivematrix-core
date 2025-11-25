@@ -221,9 +221,22 @@ def auth():
 
     private_key = current_app.config['JWT_PRIVATE_KEY']
 
+    # Create a session for revocation tracking
+    session_manager = current_app.config['SESSION_MANAGER']
+    user_session_data = {
+        'sub': user_info['sub'],
+        'name': user_info.get('name', ''),
+        'email': user_info.get('email', ''),
+        'preferred_username': user_info.get('preferred_username', ''),
+        'permission_level': permission_level,
+        'groups': groups
+    }
+    session_id = session_manager.create_session(user_session_data)
+
     payload = {
         'iss': current_app.config['JWT_ISSUER'],
         'sub': user_info['sub'],
+        'jti': session_id,  # JWT ID - used for session revocation (logout)
         'name': user_info['name'],
         'email': user_info['email'],
         'preferred_username': user_info['preferred_username'],
@@ -552,7 +565,12 @@ def token_exchange():
                 logger.error(f"Failed to get user info from Keycloak: {user_response.status_code}")
             return jsonify({'error': 'Invalid access token'}), 401
 
-        user_info = user_response.json()
+        try:
+            user_info = user_response.json()
+        except (ValueError, requests.exceptions.JSONDecodeError) as e:
+            if logger:
+                logger.error(f"Invalid JSON response from Keycloak userinfo: {e}")
+            return jsonify({'error': 'Invalid response from identity provider'}), 502
 
         # Determine permission level from groups
         groups = user_info.get('groups', [])

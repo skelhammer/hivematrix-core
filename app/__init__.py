@@ -1,9 +1,24 @@
 from flask import Flask
 from authlib.integrations.flask_client import OAuth
 from flask_limiter import Limiter
+from werkzeug.middleware.proxy_fix import ProxyFix
 import os
 
 app = Flask(__name__)
+
+# Apply ProxyFix to handle X-Forwarded headers from Nexus proxy
+# This is critical for:
+# - Correct client IP detection for rate limiting (X-Forwarded-For)
+# - Proper HTTPS detection (X-Forwarded-Proto)
+# - Correct host detection (X-Forwarded-Host)
+# - URL prefix handling (X-Forwarded-Prefix)
+app.wsgi_app = ProxyFix(
+    app.wsgi_app,
+    x_for=1,      # Trust X-Forwarded-For
+    x_proto=1,    # Trust X-Forwarded-Proto
+    x_host=1,     # Trust X-Forwarded-Host
+    x_prefix=1    # Trust X-Forwarded-Prefix
+)
 
 # Initialize rate limiter to prevent brute force and DoS attacks
 # Uses per-user rate limiting (user ID from JWT) with IP fallback
